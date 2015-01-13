@@ -21,12 +21,21 @@ This document describes how to perform typical database-related tasks with peewe
 Creating a database connection and tables
 -----------------------------------------
 
-While it is not necessary to explicitly connect to the database before using it, managing connections explicitly is a good practice. This way if the connection fails, the exception can be caught during the *connect* step, rather than some arbitrary time later when a query is executed.
+While it is not necessary to explicitly connect to the database before using it, **managing connections explicitly is a good practice**. This way if the connection fails, the exception can be caught during the *connect* step, rather than some arbitrary time later when a query is executed. Furthermore, if you're using a :ref:`connection pool <pool>`, it is actually necessary to call :py:meth:`~Database.connect` and :py:meth:`~Database.close` to ensure connections are recycled correctly.
+
+For web-apps you will typically open a connection when a request is started and close it when the response is delivered:
 
 .. code-block:: python
 
-    >>> database = SqliteDatabase('my_app.db')
-    >>> database.connect()
+    database = SqliteDatabase('my_app.db')
+
+    def before_request_handler():
+        database.connect()
+
+    def after_request_handler():
+        database.close()
+
+.. note:: See also the :ref:`advanced connection management <advanced_connection_management>` section.
 
 To use this database with your models, set the ``database`` attribute on an inner :ref:`Meta <model-options>` class:
 
@@ -478,7 +487,9 @@ The generated code is written to stdout, and can easily be redirected to a file:
 Advanced Connection Management
 ------------------------------
 
-In some situations you may want to manage your connections more explicitly. Since peewee stores the active connection in a threadlocal, this typically would mean that there could only ever be one connection open per thread. For most applications this is desirable, but if you would like to manually manage multiple connections you can create an :py:class:`ExecutionContext`.
+Managing your database connections is as simple as calling :py:meth:`~Database.connect` when you need to open a connection, and :py:meth:`~Database.close` when you are finished. In a web-app, you would typically connect when you receive a request, and close the connection when you return a response. Because connection state is stored in a thread-local, you do not need to worry about juggling connection objects -- peewee will handle it for you.
+
+In some situations, however, you may want to manage your connections more explicitly. Since peewee stores the active connection in a threadlocal, this typically would mean that there could only ever be one connection open per thread. For most applications this is desirable, but if you would like to manually manage multiple connections you can create an :py:class:`ExecutionContext`.
 
 Execution contexts allow finer-grained control over managing multiple connections to the database. When an execution context is initialized (either as a context manager or as a decorated function), a separate connection will be used for the duration of the wrapped block. You can also choose whether to wrap the block in a transaction.
 

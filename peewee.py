@@ -217,6 +217,7 @@ OP_GT = '>'
 OP_GTE = '>='
 OP_NE = '!='
 OP_IN = 'in'
+OP_NOT_IN = 'not in'
 OP_IS = 'is'
 OP_IS_NOT = 'is not'
 OP_LIKE = 'like'
@@ -399,6 +400,8 @@ class Node(object):
     # Special expressions.
     def in_(self, *rhs):
         return Expression(self, OP_IN, rhs)
+    def not_in(self, *rhs):
+        return Expression(self, OP_NOT_IN, rhs)
     def is_null(self, is_null=True):
         if is_null:
             return Expression(self, OP_IS, None)
@@ -1200,6 +1203,7 @@ class QueryCompiler(object):
         OP_GTE: '>=',
         OP_NE: '!=',
         OP_IN: 'IN',
+        OP_NOT_IN: 'NOT IN',
         OP_IS: 'IS',
         OP_IS_NOT: 'IS NOT',
         OP_BIN_AND: '&',
@@ -3410,6 +3414,15 @@ class FieldProxy(Field):
     def clone_base(self):
         return FieldProxy(self._model_alias, self.field_instance)
 
+    def coerce(self, value):
+        return self.field_instance.coerce(value)
+
+    def python_value(self, value):
+        return self.field_instance.python_value(value)
+
+    def db_value(self, value):
+        return self.field_instance.db_value(value)
+
     def __getattr__(self, attr):
         if attr == 'model_class':
             return self._model_alias
@@ -3648,6 +3661,9 @@ class BaseModel(type):
 
         return cls
 
+    def __iter__(self):
+        return iter(self.select())
+
 class Model(with_metaclass(BaseModel)):
     def __init__(self, *args, **kwargs):
         self._data = self._meta.get_default_dict()
@@ -3723,7 +3739,7 @@ class Model(with_metaclass(BaseModel)):
 
     @classmethod
     def table_exists(cls):
-        return cls._meta.db_table in cls._meta.database.get_tables()
+        return cls._meta.db_table in cls._meta.database.get_tables(schema=cls._meta.schema)
 
     @classmethod
     def create_table(cls, fail_silently=False):

@@ -68,16 +68,22 @@ def print_models(introspector, tables=None):
 
         print_('class %s(BaseModel):' % database.model_names[table])
         columns = database.columns[table]
+        primary_keys = database.primary_keys[table]
         for name, column in sorted(columns.items()):
             if name == 'id' and column.field_class in introspector.pk_classes:
                 continue
+            if column.primary_key and len(primary_keys) > 1:
+                # If we have a CompositeKey, then we do not want to explicitly
+                # mark the columns as being primary keys.
+                column.primary_key = False
 
             print_('    %s' % column.get_field())
 
         print_('')
         print_('    class Meta:')
         print_('        db_table = \'%s\'' % table)
-        primary_keys = database.primary_keys[table]
+        if introspector.schema:
+            print_('        schema = \'%s\'' % introspector.schema)
         if len(primary_keys) > 1:
             pk_field_names = sorted([
                 field.name for col, field in columns.items()

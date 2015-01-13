@@ -263,6 +263,14 @@ class TestQueryingModels(ModelTestCase):
         results = [x.ct for x in query]
         self.assertEqual(results, [2, 2, 2])
 
+    def test_model_iter(self):
+        self.create_users_blogs(3, 2)
+        usernames = [user.username for user in User]
+        self.assertEqual(sorted(usernames), ['u0', 'u1', 'u2'])
+
+        blogs = list(Blog)
+        self.assertEqual(len(blogs), 6)
+
 
 class TestModelAPIs(ModelTestCase):
     requires = [User, Blog, Category, UserCategory]
@@ -1105,3 +1113,35 @@ class TestModelInheritance(ModelTestCase):
         self.assertEqual(b_from_db.user, u)
         self.assertEqual(b2_from_db.user, u)
         self.assertEqual(b2_from_db.extra_field, 'foo')
+
+
+class TestAliasBehavior(ModelTestCase):
+    requires = [UpperModel]
+
+    def test_alias_with_coerce(self):
+        UpperModel.create(data='test')
+        um = UpperModel.get()
+        self.assertEqual(um.data, 'TEST')
+
+        Alias = UpperModel.alias()
+        normal = (UpperModel.data == 'foo')
+        aliased = (Alias.data == 'foo')
+        _, normal_p = compiler.parse_node(normal)
+        _, aliased_p = compiler.parse_node(aliased)
+        self.assertEqual(normal_p, ['FOO'])
+        self.assertEqual(aliased_p, ['FOO'])
+
+        expected = (
+            'SELECT "uppermodel"."id", "uppermodel"."data" '
+            'FROM "uppermodel" AS uppermodel '
+            'WHERE ("uppermodel"."data" = ?)')
+
+        query = UpperModel.select().where(UpperModel.data == 'foo')
+        sql, params = compiler.generate_select(query)
+        self.assertEqual(sql, expected)
+        self.assertEqual(params, ['FOO'])
+
+        query = Alias.select().where(Alias.data == 'foo')
+        sql, params = compiler.generate_select(query)
+        self.assertEqual(sql, expected)
+        self.assertEqual(params, ['FOO'])
