@@ -361,7 +361,7 @@ class MySQLColumn(namedtuple('_Column', _column_attributes)):
         if self.is_pk:
             parts.append(SQL('PRIMARY KEY'))
         if self.extra:
-            parts.append(SQL(extra))
+            parts.append(SQL(self.extra))
         return Clause(*parts)
 
 
@@ -387,6 +387,8 @@ class MySQLMigrator(SchemaMigrator):
     @operation
     def drop_not_null(self, table, column):
         column = self._get_column_definition(table, column)
+        if column.is_pk:
+            raise ValueError('Primary keys can not be null')
         return Clause(
             SQL('ALTER TABLE'),
             Entity(table),

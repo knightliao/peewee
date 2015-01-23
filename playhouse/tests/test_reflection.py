@@ -67,13 +67,18 @@ class Category(BaseModel):
     name = CharField(max_length=10)
     parent = ForeignKeyField('self', null=True)
 
+class Nugget(BaseModel):
+    category_id = ForeignKeyField(Category, db_column='category_id')
+    category = CharField()
+
 MODELS = (
     ColTypes,
     Nullable,
     RelModel,
     FKPK,
     Underscores,
-    Category)
+    Category,
+    Nugget)
 
 class TestReflection(PeeweeTestCase):
     def setUp(self):
@@ -100,6 +105,7 @@ class TestReflection(PeeweeTestCase):
             'category',
             'coltypes',
             'fkpk',
+            'nugget',
             'nullable',
             'relmodel',
             'underscores'])
@@ -242,9 +248,12 @@ class TestReflection(PeeweeTestCase):
     def generative_test(fn):
         def inner(self):
             for database in DATABASES:
-                introspector = Introspector.from_database(database)
-                self.create_tables(database)
-                fn(self, introspector)
+                try:
+                    introspector = Introspector.from_database(database)
+                    self.create_tables(database)
+                    fn(self, introspector)
+                finally:
+                    drop_model_tables(MODELS)
         return inner
 
     @generative_test
@@ -270,6 +279,9 @@ class TestReflection(PeeweeTestCase):
             ('relmodel', (
                 ('col_types_id', ForeignKeyField, False),
                 ('col_types_nullable_id', ForeignKeyField, True))),
+            ('nugget', (
+                ('category_id', ForeignKeyField, False),
+                ('category', CharField, False))),
             ('nullable', (
                 ('nullable_cf', CharField, True),
                 ('nullable_if', IntegerField, True))),
@@ -352,6 +364,7 @@ class TestReflection(PeeweeTestCase):
         self.assertEqual(col_types_nullable_id.get_field_parameters(), {
             'db_column': "'col_types_nullable_id'",
             'null': True,
+            'related_name': "'coltypes_col_types_nullable_set'",
             'rel_model': 'Coltypes',
             'to_field': "'f11'",
         })
@@ -372,6 +385,18 @@ class TestReflection(PeeweeTestCase):
             'rel_model': "'self'",
             'to_field': "'id'",
         })
+
+        nugget = columns['nugget']
+        category_fk = nugget['category_id']
+        self.assertEqual(category_fk.name, 'category_id')
+        self.assertEqual(category_fk.get_field_parameters(), {
+            'to_field': "'id'",
+            'rel_model': 'Category',
+            'db_column': "'category_id'",
+        })
+
+        category = nugget['category']
+        self.assertEqual(category.name, 'category')
 
     @generative_test
     def test_get_field(self, introspector):
@@ -401,13 +426,21 @@ class TestReflection(PeeweeTestCase):
                  'db_column=\'col_types_id\', primary_key=True, '
                  'rel_model=Coltypes, to_field=\'f11\')'),
             )),
+            ('nugget', (
+                ('category_id', 'category_id = ForeignKeyField('
+                 'db_column=\'category_id\', rel_model=Category, '
+                 'to_field=\'id\')'),
+                ('category', 'category = CharField()'),
+            )),
             ('relmodel', (
                 ('col_types_id', 'col_types = ForeignKeyField('
                  'db_column=\'col_types_id\', rel_model=Coltypes, '
                  'to_field=\'f11\')'),
                 ('col_types_nullable_id', 'col_types_nullable = '
                  'ForeignKeyField(db_column=\'col_types_nullable_id\', '
-                 'null=True, rel_model=Coltypes, to_field=\'f11\')'),
+                 'null=True, rel_model=Coltypes, '
+                 'related_name=\'coltypes_col_types_nullable_set\', '
+                 'to_field=\'f11\')'),
             )),
             ('underscores', (
                 ('_id', '_id = PrimaryKeyField()'),

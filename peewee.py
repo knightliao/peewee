@@ -31,7 +31,7 @@ from copy import deepcopy
 from functools import wraps
 from inspect import isclass
 
-__version__ = '2.4.5'
+__version__ = '2.4.6'
 __all__ = [
     'BareField',
     'BigIntegerField',
@@ -252,6 +252,10 @@ def merge_dict(source, overrides):
     merged = source.copy()
     merged.update(overrides)
     return merged
+
+def pythonify_name(name):
+    name = re.sub('([a-z_])([A-Z][_a-z])', '\\1 \\2', name)
+    return re.sub('[^\w+]', '_', name.lower())
 
 def returns_clone(func):
     """
@@ -1040,6 +1044,15 @@ class ForeignKeyField(IntegerField):
             to_field=self.to_field,
             **kwargs)
 
+    def _get_descriptor(self):
+        return RelationDescriptor(self, self.rel_model)
+
+    def _get_backref_descriptor(self):
+        return ReverseRelationDescriptor(self)
+
+    def _get_related_name(self):
+        return self._related_name or ('%s_set' % self.model_class._meta.name)
+
     def add_to_class(self, model_class, name):
         if isinstance(self.rel_model, Proxy):
             def callback(rel_model):
@@ -1057,8 +1070,7 @@ class ForeignKeyField(IntegerField):
         model_class._meta.fields[self.name] = self
         model_class._meta.columns[self.db_column] = self
 
-        model_name = model_class._meta.name
-        self.related_name = self._related_name or '%s_set' % (model_name)
+        self.related_name = self._get_related_name()
 
         if self.rel_model == 'self':
             self.rel_model = self.model_class
@@ -1081,10 +1093,10 @@ class ForeignKeyField(IntegerField):
                 raise AttributeError(error % (
                     self.model_class._meta.name, self.name, self.related_name))
 
-        fk_descriptor = RelationDescriptor(self, self.rel_model)
-        backref_descriptor = ReverseRelationDescriptor(self)
-        setattr(model_class, name, fk_descriptor)
-        setattr(self.rel_model, self.related_name, backref_descriptor)
+        setattr(model_class, name, self._get_descriptor())
+        setattr(self.rel_model,
+                self.related_name,
+                self._get_backref_descriptor())
         self._is_bound = True
 
         model_class._meta.rel[self.name] = self
@@ -1127,8 +1139,8 @@ class CompositeKey(object):
 
     def __get__(self, instance, instance_type=None):
         if instance is not None:
-            return tuple(getattr(instance, field_name)
-                         for field_name in self.field_names)
+            return tuple([getattr(instance, field_name)
+                          for field_name in self.field_names])
         return self
 
     def __set__(self, instance, value):
@@ -1979,11 +1991,18 @@ class AggregateQueryResultWrapper(ModelQueryResultWrapper):
             self.initialize(self.cursor.description)
             self._initialized = True
 
+        def _get_pk(instance):
+            if isinstance(instance._meta.primary_key, CompositeKey):
+                return tuple([
+                    instance._data[field_name]
+                    for field_name in instance._meta.primary_key.field_names])
+            return instance._get_pk_value()
+
         identity_map = {}
         _constructed = self.construct_instances(row)
         primary_instance = _constructed[self.model]
         for model_class, instance in _constructed.items():
-            identity_map[model_class] = {instance._get_pk_value(): instance}
+            identity_map[model_class] = {_get_pk(instance): instance}
 
         model_data = self.read_model_data(row)
         while True:
@@ -2007,7 +2026,7 @@ class AggregateQueryResultWrapper(ModelQueryResultWrapper):
             for model_class, instance in new_instances.items():
                 # Do not include any instances which are comprised solely of
                 # NULL values.
-                pk_value = instance._get_pk_value()
+                pk_value = _get_pk(instance)
                 if [val for val in instance._data.values() if val is not None]:
                     identity_map[model_class][pk_value] = instance
 
@@ -2020,24 +2039,31 @@ class AggregateQueryResultWrapper(ModelQueryResultWrapper):
 
             for join in self.join_meta[current]:
                 foreign_key = current._meta.rel_for_model(join.dest, join.on)
-                if join.dest not in identity_map:
-                    continue
 
                 if foreign_key:
+                    if join.dest not in identity_map:
+                        continue
+
                     for pk, instance in identity_map[current].items():
                         joined_inst = identity_map[join.dest][
                             instance._data[foreign_key.name]]
                         setattr(instance, foreign_key.name, joined_inst)
                         instances.append(joined_inst)
                 else:
-                    backref = current._meta.reverse_rel_for_model(
-                        join.dest, join.on)
-                    if not backref:
+                    if not isinstance(join.dest, Node):
+                        backref = current._meta.reverse_rel_for_model(
+                            join.dest, join.on)
+                        if not backref:
+                            continue
+                    else:
                         continue
 
                     attr_name = backref.related_name
                     for instance in identity_map[current].values():
                         setattr(instance, attr_name, [])
+
+                    if join.dest not in identity_map:
+                        continue
 
                     for pk, instance in identity_map[join.dest].items():
                         if pk is None:
@@ -3739,7 +3765,10 @@ class Model(with_metaclass(BaseModel)):
 
     @classmethod
     def table_exists(cls):
-        return cls._meta.db_table in cls._meta.database.get_tables(schema=cls._meta.schema)
+        kwargs = {}
+        if cls._meta.schema:
+            kwargs['schema'] = cls._meta.schema
+        return cls._meta.db_table in cls._meta.database.get_tables(**kwargs)
 
     @classmethod
     def create_table(cls, fail_silently=False):
